@@ -75,6 +75,54 @@ function previous(name){
  const found=sorted.map(w=>w.exercises.find(e=>e.name===name)).find(Boolean);
  return found?'지난 '+found.sets.map(s=>N(s.kg)+'kg × '+N(s.reps)+'회').join(' · '):'이전 기록 없음';
 }
+
+/* Additional exercise energy (resting expenditure excluded).
+   2024 Compendium: resistance training, 8–15 reps at varied resistance = 3.5 MET.
+   Moderate treadmill/walking approximation = 3.5 MET (speed not recorded).
+   Strength session duration estimate = 2 minutes per completed set, including breaks.
+   https://pacompendium.com/adult-compendium/ */
+const FOOD_ENERGY=[
+ {name:'흰쌀밥',portion:'공기',kcal:300,icon:'🍚',unit:'1공기 · 약 300kcal'},
+ {name:'라면',portion:'봉지',kcal:500,icon:'🍜',unit:'1봉지 · 약 500kcal'},
+ {name:'삶은 달걀',portion:'개',kcal:75,icon:'🥚',unit:'1개 · 약 75kcal'},
+ {name:'사과',portion:'개',kcal:95,icon:'🍎',unit:'중간 크기 1개 · 약 95kcal'}
+];
+function calcWorkoutEnergy(workout,isDraft=false){
+ const sets=(workout.exercises||[]).reduce((n,ex)=>n+(ex.sets||[]).filter(st=>!isDraft||st.done).length,0);
+ const mins=(workout.cardio||[]).reduce((n,c)=>n+((!isDraft||c.done)?N(c.minutes):0),0);
+ const measures=sortedWeights();
+ const older=measures.filter(x=>x.date<=workout.date).at(-1);
+ const selected=older||measures.at(-1);
+ if(!selected||(!sets&&!mins))return {available:false,sets,mins};
+ const weight=Number(selected.kg);
+ const strengthMinutes=sets*2;
+ const caloriesPerMin=(3.5-1)*3.5*weight/200;
+ const strength=Math.round(strengthMinutes*caloriesPerMin);
+ const cardio=Math.round(mins*caloriesPerMin);
+ return {available:true,total:Math.round((strengthMinutes+mins)*caloriesPerMin),strength,cardio,weight,
+   weightDate:selected.date,stale:Math.abs(Date.parse(workout.date+'T00:00:00Z')-Date.parse(selected.date+'T00:00:00Z'))>30*86400000,
+   sets,mins};
+}
+function foodEnergyItems(total){
+ return '<div class="food-list">'+FOOD_ENERGY.map(f=>{
+ const ratio=total/f.kcal;
+ return '<div class="food-item"><div class="food-info"><span class="food-icon" aria-hidden="true">'+f.icon+'</span><span><span class="food-name">'+f.name+'</span><br><span class="food-unit">'+f.unit+'</span></span></div>'+
+ '<div class="row" style="margin-top:7px"><span class="food-qty">'+num(ratio,2)+f.portion+'</span><span class="muted">열량 비교</span></div>'+
+ '<div class="food-track"><span class="food-fill" style="width:'+Math.min(100,Math.max(0,ratio*100)).toFixed(1)+'%"></span></div></div>';
+ }).join('')+'</div>';
+}
+function renderEnergyCard(workout,isDraft=false){
+ const v=calcWorkoutEnergy(workout,isDraft);
+ if(!v.available){
+  return '<div class="energy-empty">'+(v.sets+v.mins===0?'운동 세트를 체크하면 예상 칼로리가 표시됩니다.':'체중·BMI 탭에 몸무게를 기록하면 예상 칼로리를 계산할 수 있습니다.')+'</div>';
+ }
+ return '<section class="energy-card"><div class="energy-head"><div><div class="energy-label">🔥 예상 운동 소모 칼로리</div><div class="energy-total">약 '+v.total+'<span style="font-size:13px;font-weight:700"> kcal</span></div></div><span class="pill">활동 칼로리</span></div>'+
+ '<div class="energy-parts"><span>🏋️ 근력 약 '+v.strength+'kcal</span><span>🚶 걷기 약 '+v.cardio+'kcal</span></div>'+
+ '<div class="energy-compact">몸무게 '+num(v.weight)+'kg ('+E(v.weightDate)+' 기록) 기준'+(v.stale?' · <b>과거 체중으로 계산했어요. 현재 체중을 업데이트하면 더 유용합니다.</b>':'')+'</div>'+
+ '<div style="font-weight:850;font-size:13px;margin:14px 0 0;color:#31486c">이 열량을 음식으로 비교하면?</div>'+foodEnergyItems(v.total)+
+ '<details class="energy-details"><summary>계산 기준과 주의사항 보기</summary><p>2024 성인 신체활동 MET 표를 참고했습니다. 근력운동은 완료한 세트당 2분(휴식 포함 추정), 걷기는 기록된 시간에 각각 3.5 MET를 적용하고, 휴식 시 소모량(1 MET)을 제외한 <b>추가 활동 칼로리</b>만 표시합니다. 실제 칼로리는 걷기 속도·경사·세트 간 휴식·강도와 개인차에 따라 크게 달라질 수 있습니다. 음식은 일반적인 1회 제공량의 대략적인 열량이며, 영양적 동등성이나 식사 조절 지침을 뜻하지 않습니다.</p></details></section>';
+}
+
 function renderWork(){
  const s=stats(draft);
  let h='<section class="hero"><div style="font-size:11px;font-weight:750;color:#b4c6fa">MY WORKOUT · 주 3회 전신</div><h1>'+(draft.editingId?'운동 기록 수정':'오늘도 한 세트씩.')+'</h1><p>무게와 횟수를 입력하고 완료하면 체크하세요.</p><div class="stats"><div><strong>'+s.done+' / '+s.total+'</strong><br><span>완료 근력 세트</span></div><div style="text-align:right"><strong>'+s.minutes+'분</strong><br><span>유산소</span></div></div><div class="bar"><div style="width:'+(s.total?Math.round(100*s.done/s.total):0)+'%"></div></div></section>';
@@ -88,7 +136,7 @@ function renderWork(){
  });
  h+='<h2>유산소</h2><section class="card">';
  draft.cardio.forEach((c,i)=>{h+='<div class="row" style="margin:7px 0"><strong>'+E(c.name)+'</strong><div class="flex"><input style="width:82px" type="number" min="0" inputmode="numeric" data-cardio="'+i+'" value="'+N(c.minutes)+'" aria-label="유산소 분"><span class="muted">분</span><button class="btn '+(c.done?'checked':'')+'" type="button" data-action="checkcardio" data-i="'+i+'">'+(c.done?'✓':'○')+'</button></div></div>'});
- h+='</section><button class="btn primary" type="button" data-action="save" '+(busy?'disabled':'')+'>'+(busy?'처리 중…':draft.editingId?'☁️ GitHub에 수정 저장':'☁️ GitHub에 운동 저장')+'</button><p class="help">완료 체크된 세트와 유산소만 저장됩니다. GitHub 연결 전에는 작성한 내용이 휴대폰 브라우저에 임시 보관됩니다.</p>';
+ h+='</section><h2>예상 칼로리 · 음식 비교</h2>'+renderEnergyCard(draft,true)+'<button class="btn primary" type="button" data-action="save" '+(busy?'disabled':'')+'>'+(busy?'처리 중…':draft.editingId?'☁️ GitHub에 수정 저장':'☁️ GitHub에 운동 저장')+'</button><p class="help">완료 체크된 세트와 유산소만 저장됩니다. GitHub 연결 전에는 작성한 내용이 휴대폰 브라우저에 임시 보관됩니다.</p>';
  if(draft.editingId)h+=btn('수정 취소','cancel','full');
  return h;
 }
@@ -101,6 +149,7 @@ function renderHistory(){
   h+='<section class="card"><div class="row"><span class="history-date">'+datePretty(w.date)+'</span><span class="pill">☁ 비공개 저장</span></div><div class="muted">'+E(w.label||'전신 운동')+'</div><div class="history-stat"><div><strong>'+n+'</strong><span>근력 세트</span></div><div><strong>'+rep+'</strong><span>총 반복</span></div><div><strong>'+mins+'분</strong><span>유산소</span></div></div>';
   w.exercises.forEach(ex=>h+='<div class="line"><b>'+E(ex.name)+'</b><span>'+ex.sets.map(s=>N(s.kg)+'kg×'+N(s.reps)).join(' / ')+'</span></div>');
   w.cardio.forEach(c=>h+='<div class="line"><b>'+E(c.name)+'</b><span>'+N(c.minutes)+'분</span></div>');
+  h+=renderEnergyCard(w,false);
   h+='<div class="buttons"><button class="btn" data-action="edit" data-id="'+E(w.id)+'">수정</button><button class="btn danger" data-action="delete" data-id="'+E(w.id)+'">삭제</button></div></section>';
  }
  h+=btn('CSV 기록 내보내기','csv','full');return h;
