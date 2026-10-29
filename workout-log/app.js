@@ -99,7 +99,7 @@ function calcWorkoutEnergy(workout,isDraft=false){
  const caloriesPerMin=(3.5-1)*3.5*weight/200;
  const strength=Math.round(strengthMinutes*caloriesPerMin);
  const cardio=Math.round(mins*caloriesPerMin);
- return {available:true,total:Math.round((strengthMinutes+mins)*caloriesPerMin),strength,cardio,weight,
+ return {available:true,total:strength+cardio,strength,cardio,weight,
    weightDate:selected.date,stale:Math.abs(Date.parse(workout.date+'T00:00:00Z')-Date.parse(selected.date+'T00:00:00Z'))>30*86400000,
    sets,mins};
 }
