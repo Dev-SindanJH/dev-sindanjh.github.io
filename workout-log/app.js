@@ -12,6 +12,7 @@ const stored=localStorage.getItem(STATE_KEY);let draft;
 try{draft=JSON.parse(stored)?.draft||newDraft()}catch(e){draft=newDraft()}
 if(!draft.exercises||!draft.cardio)draft=newDraft();
 let tab='work',records=[],token='',remember=false,busy=false,status='',currentId=null,hydrated=!!stored;
+let bodyProfile={heightCm:177},bodyWeights=[],chartRange='all';
 try{let v=JSON.parse(localStorage.getItem(TOKEN_KEY)||'{}');remember=!!v.remember;token=v.token||sessionStorage.getItem(SESSION_KEY)||''}catch(e){}
 function persist(){localStorage.setItem(STATE_KEY,JSON.stringify({draft}))}
 function alertError(e){alert((e&&e.message)||String(e))}
@@ -44,7 +45,7 @@ async function sync(showMessage=false){
  if(!token||busy)return;
  busy=true;status='최신 기록 불러오는 중';render();
  try{
-  const v=await getRemote();records=v.data.workouts.slice();status='비공개 운동 기록 '+records.length+'개 동기화됨';populateDraft();
+  const v=await getRemote();records=v.data.workouts.slice();bodyProfile=v.data.profile||{heightCm:177};bodyWeights=Array.isArray(v.data.bodyWeights)?v.data.bodyWeights.slice():[];status='비공개 운동 기록 '+records.length+'개 동기화됨';populateDraft();
   if(showMessage)alert('GitHub 운동 기록 '+records.length+'개를 불러왔습니다.');
  }catch(e){status='연결 오류 · '+e.message;if(showMessage)alertError(e)}
  finally{busy=false;render()}
@@ -104,6 +105,98 @@ function renderHistory(){
  }
  h+=btn('CSV 기록 내보내기','csv','full');return h;
 }
+
+function safeWeight(w){const v=Number(w);return Number.isFinite(v)&&v>=25&&v<=400?v:null}
+function safeHeight(v){const n=Number(v);return Number.isFinite(n)&&n>=100&&n<=250?n:null}
+function prettyDate(s){const a=String(s).split('-');return a.length===3?Number(a[0])+'년 '+Number(a[1])+'월 '+Number(a[2])+'일':E(s)}
+function sortedWeights(){return bodyWeights.filter(x=>x&&/^\d{4}-\d{2}-\d{2}$/.test(x.date)&&safeWeight(x.kg)!==null).slice().sort((a,b)=>a.date.localeCompare(b.date))}
+function bmiCategory(b){return b<18.5?'저체중':b<23?'정상':b<25?'비만 전단계':b<30?'1단계 비만':b<35?'2단계 비만':'3단계 비만'}
+function num(v,d=1){return Number(v).toLocaleString('ko-KR',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function bodyChart(items){
+ if(!items.length)return '<div style="padding:30px;text-align:center;color:#8898ad;font-size:13px">선택한 기간에 저장된 체중 기록이 없습니다.</div>';
+ const W=380,H=205,L=44,R=14,T=17,B=32,iw=W-L-R,ih=H-T-B;
+ const times=items.map(x=>Date.parse(x.date+'T00:00:00Z')),rawMin=Math.min(...items.map(x=>Number(x.kg))),rawMax=Math.max(...items.map(x=>Number(x.kg)));
+ const yMin=Math.floor((rawMin-1.5)*2)/2,yMax=Math.ceil((rawMax+1.5)*2)/2,ySpan=Math.max(1,yMax-yMin);
+ const xMin=Math.min(...times),xMax=Math.max(...times), xSpan=Math.max(1,xMax-xMin);
+ const x=i=>items.length===1?L+iw/2:L+(times[i]-xMin)/xSpan*iw;
+ const y=v=>T+(yMax-v)/ySpan*ih;
+ let axes='';for(let i=0;i<=4;i++){const v=yMin+ySpan*i/4,yy=y(v);axes+='<line class="grid-line" x1="'+L+'" y1="'+yy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+yy.toFixed(1)+'"></line><text class="chart-label" x="'+(L-6)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end">'+num(v)+'</text>'}
+ const points=items.map((p,i)=>({x:x(i),y:y(Number(p.kg)),p})),path=points.map((p,i)=>(i?'L':'M')+p.x.toFixed(2)+' '+p.y.toFixed(2)).join(' ');
+ let area=points.length>1?'<path d="'+path+' L'+points.at(-1).x.toFixed(2)+' '+(T+ih)+' L'+points[0].x.toFixed(2)+' '+(T+ih)+'Z" fill="url(#wtfade)"></path>':'';
+ const dots=points.map(p=>'<circle cx="'+p.x.toFixed(2)+'" cy="'+p.y.toFixed(2)+'" r="5" fill="#4967ea" stroke="#fff" stroke-width="2"><title>'+E(p.p.date)+' · '+num(p.p.kg)+' kg</title></circle>').join('');
+ const lab=s=>s.slice(5).replace('-','/');
+ return '<div class="chart-wrap"><svg viewBox="0 0 380 205" role="img" aria-label="체중 변화 그래프, '+items.length+'개 기록, '+num(rawMin)+'kg에서 '+num(rawMax)+'kg"><defs><linearGradient id="wtfade" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#7893fb" stop-opacity=".30"/><stop offset="1" stop-color="#7893fb" stop-opacity=".015"/></linearGradient></defs>'+axes+area+'<path d="'+path+'" fill="none" stroke="#4967ea" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"></path>'+dots+'<text class="chart-label" x="'+L+'" y="'+(H-8)+'" text-anchor="start">'+E(lab(items[0].date))+'</text><text class="chart-label" x="'+(W-R)+'" y="'+(H-8)+'" text-anchor="end">'+E(lab(items.at(-1).date))+'</text></svg></div>';
+}
+function renderBody(){
+ const list=sortedWeights(),last=list.at(-1),first=list[0],ht=safeHeight(bodyProfile.heightCm)||177;
+ const idx=last?Number(last.kg)/((ht/100)**2):null,delta=last&&first&&list.length>1?Number(last.kg)-Number(first.kg):null;
+ const rangeDays=chartRange==='all'?Infinity:Number(chartRange),cutoff=Number.isFinite(rangeDays)?Date.parse(date()+'T00:00:00Z')-rangeDays*86400000:-Infinity;
+ const selected=list.filter(x=>Date.parse(x.date+'T00:00:00Z')>=cutoff);
+ let h='<h2>체중 & BMI</h2><div class="weight-hero"><div class="body-head"><div><div class="small">최근 기록 기반 BMI</div><div class="bmi-big">'+(idx===null?'—':num(idx))+'</div><div class="sub">'+(last?prettyDate(last.date)+' 측정값 기준':'체중을 먼저 기록해 주세요')+'</div></div><div style="text-align:right"><span class="bmi-tag">'+(idx===null?'기록 없음':E(bmiCategory(idx)))+'</span><div class="sub">한국 성인 BMI 기준</div></div></div><div class="metric-grid"><div class="metric"><small>최근 기록 체중</small><strong>'+(last?num(last.kg)+'<small style="display:inline;font-size:12px"> kg</small>':'—')+'</strong></div><div class="metric"><small>첫 기록 대비</small><strong class="'+(delta===null?'':delta>0?'positive':'negative')+'">'+(delta===null?'—':(delta>0?'+':'')+num(delta)+' kg')+'</strong></div></div></div>';
+ h+='<section class="card"><div class="row"><strong>내 키</strong><div class="flex"><input style="width:93px" id="height-cm" type="number" min="100" max="250" step="0.1" inputmode="decimal" value="'+ht+'"><span class="muted">cm</span><button class="btn" data-action="heightsave">저장</button></div></div><div class="footnote" style="margin-top:10px">BMI = 체중(kg) ÷ 키(m)² · BMI는 건강 상태를 간단히 살펴보는 참고 지표입니다.</div></section>';
+ h+='<h2>체중 기록하기</h2><section class="card"><div class="entry-grid"><label><span class="field">측정 날짜</span><input type="date" id="weight-date" value="'+E(date())+'"></label><label><span class="field">몸무게 (kg)</span><input type="number" id="weight-kg" inputmode="decimal" min="25" max="400" step="0.1" placeholder="예: 100.5"></label></div><button class="btn primary" type="button" data-action="weightsave" id="weight-save-label" style="margin-top:14px">☁ 체중 기록 저장</button><p class="footnote">같은 날짜에 다시 기록하면 기존 체중을 수정합니다. 운동 기록과 동일한 비공개 GitHub 저장소에 저장됩니다.</p></section>';
+ h+='<div class="row"><h2>몸무게 변화</h2><div class="range-pills">'+[['30','30일'],['90','90일'],['all','전체']].map(x=>'<button class="btn '+(chartRange===x[0]?'on':'')+'" data-action="weightrange" data-range="'+x[0]+'">'+x[1]+'</button>').join('')+'</div></div><section class="card">'+bodyChart(selected)+'<div class="footnote" style="text-align:center;margin-top:7px">점 위에 표시되는 날짜와 체중으로 변화 확인 · 총 '+selected.length+'개 기록</div></section>';
+ h+='<div class="row"><h2>일자별 체중 기록</h2><span class="muted">총 '+list.length+'일</span></div><section class="card">';
+ if(!list.length)h+='<p class="muted">아직 기록된 체중이 없습니다.</p>';
+ for(let i=list.length-1;i>=0;i--){const w=list[i],prev=list[i-1],diff=prev?(Number(w.kg)-Number(prev.kg)):null;h+='<div class="weight-row"><div><strong>'+E(prettyDate(w.date))+'</strong><div class="muted">'+(diff===null?'첫 기록':('직전 기록 대비 '+(diff>0?'+':'')+num(diff)+'kg'))+'</div></div><div style="display:flex;align-items:center;gap:10px"><span class="value">'+num(w.kg)+'<span class="muted"> kg</span></span><span class="mini"><button class="btn" data-action="weightedit" data-date="'+E(w.date)+'">수정</button><button class="btn danger" data-action="weightdelete" data-date="'+E(w.date)+'">삭제</button></span></div></div>'}
+ h+='</section>';
+ return h;
+}
+async function updateBodyData(transform,message){
+ if(!token)throw Error('관리 탭에서 GitHub 토큰을 연결해주세요.');
+ if(busy)throw Error('동기화 중입니다. 잠시 후 다시 시도해주세요.');
+ busy=true;status='체중 기록 저장 중';render();
+ try{
+  for(let attempt=0;attempt<3;attempt++){
+   const r=await getRemote();let value=transform({...r.data,bodyWeights:Array.isArray(r.data.bodyWeights)?r.data.bodyWeights.slice():[],profile:{...(r.data.profile||{})}});
+   if(!value||!Array.isArray(value.bodyWeights))throw Error('체중 기록 데이터가 올바르지 않습니다.');
+   const response=await fetch(API,{method:'PUT',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({message,content:encode(value),sha:r.sha})});
+   if((response.status===409||response.status===422)&&attempt<2)continue;
+   if(!response.ok)throw apiError(response);
+   bodyProfile=value.profile||{heightCm:177};bodyWeights=value.bodyWeights;records=value.workouts.slice();
+   status='비공개 체중 기록 '+bodyWeights.length+'건 저장됨';
+   return;
+  }
+  throw Error('다른 기기에서 기록이 변경되었습니다. 다시 시도해주세요.');
+ }catch(e){status='체중 저장 실패 · '+e.message;throw e}
+ finally{busy=false;render()}
+}
+async function saveHeight(){
+ const h=safeHeight(document.getElementById('height-cm')?.value);
+ if(!h){alert('키는 100~250cm 사이로 입력해주세요.');return}
+ try{await updateBodyData(v=>({...v,profile:{...v.profile,heightCm:h}}),'Update height profile');alert('키 '+num(h)+'cm가 비공개 GitHub에 저장되었습니다.')}catch(e){alertError(e)}
+}
+async function saveBodyWeight(){
+ const dateEl=document.getElementById('weight-date'), kgEl=document.getElementById('weight-kg');
+ const d=dateEl?.value,k=safeWeight(kgEl?.value);
+ if(!d||!(/^\d{4}-\d{2}-\d{2}$/.test(d))){alert('측정 날짜를 확인해주세요.');return}
+ if(k===null){alert('체중을 25~400kg 사이로 입력해주세요.');return}
+ const existing=bodyWeights.find(x=>x.date===d);
+ if(existing&&!confirm(d+'의 기존 체중 기록을 '+num(k)+'kg로 수정할까요?'))return;
+ try{
+  await updateBodyData(v=>{
+    const i=v.bodyWeights.findIndex(x=>x.date===d);
+    const row={id:i>=0?v.bodyWeights[i].id||'body-'+d:'body-'+d,date:d,kg:k};
+    if(i>=0)v.bodyWeights[i]=row;else v.bodyWeights.push(row);
+    v.bodyWeights.sort((a,b)=>a.date.localeCompare(b.date));return v;
+  },'Save body weight '+d);
+  const e=document.getElementById('weight-kg');if(e)e.value='';
+  alert('비공개 GitHub에 '+d+' 체중 '+num(k)+'kg을 저장했습니다.');
+ }catch(e){alertError(e)}
+}
+function editBodyWeight(d){
+ const item=bodyWeights.find(x=>x.date===d),dateEl=document.getElementById('weight-date'),kgEl=document.getElementById('weight-kg');
+ if(!item||!dateEl||!kgEl)return;
+ dateEl.value=item.date;kgEl.value=item.kg;
+ document.getElementById('weight-save-label').textContent='☁ 체중 수정 저장';
+ kgEl.focus();
+ window.scrollTo({top:0,behavior:'smooth'});
+}
+async function deleteBodyWeight(d){
+ if(!confirm(d+' 체중 기록을 삭제할까요?'))return;
+ try{await updateBodyData(v=>{v.bodyWeights=v.bodyWeights.filter(x=>x.date!==d);return v;},'Delete body weight '+d);alert(d+' 체중 기록을 삭제했습니다.')}catch(e){alertError(e)}
+}
+
 function renderSettings(){
  return '<h2>비공개 GitHub 연동</h2><section class="card"><p class="muted">ChatGPT에서 저장한 기록과 웹에서 저장한 기록은 같은 비공개 <b>'+E(REPO)+'</b>의 <b>'+E(PATH)+'</b>를 사용합니다.</p><form id="auth-form"><label class="field" for="pat">GitHub Fine-grained 토큰</label><input class="full" id="pat" type="password" placeholder="'+(token?'기존 토큰 설정됨 · 바꾸려면 새 토큰 입력':'github_pat_...')+'" autocomplete="off"><label class="field" style="font-weight:500"><input type="checkbox" id="remember" '+(remember?'checked':'')+'> 이 기기에 토큰 기억하기</label><button class="btn primary" type="submit">연결 / 토큰 변경</button></form><p class="help">토큰은 diet-health 저장소만 선택하고 <b>Contents: Read and write</b> 권한을 지정하세요. 기억하기는 기본적으로 꺼져 있습니다. 사용하면 토큰이 이 브라우저에 저장되므로 개인 기기에서만 설정하세요.</p><div class="buttons">'+btn('최신 기록 불러오기','sync')+btn('연결 해제','disconnect')+'</div><p class="help"><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener noreferrer">GitHub 토큰 설정 열기</a></p></section><h2>내 운동 관리</h2><section class="card"><div class="buttons">'+btn('운동 종목 추가','addex')+btn('루틴 초기화','reset')+'</div><div class="buttons">'+btn('JSON 백업 다운로드','backup')+btn('백업 불러오기','import')+'</div><input type="file" id="import-file" accept=".json,application/json" class="hidden"/><p class="help">브라우저에 저장한 임시 루틴은 새 주소로 옮겨지지 않습니다. 운동 기록은 기존 비공개 GitHub에서 다시 불러옵니다. 이 웹사이트의 화면 코드는 공개지만 운동 기록과 토큰은 코드에 포함되지 않습니다.</p></section>';
 }
@@ -112,7 +205,7 @@ function render(){
  cloud.textContent=status||(!token?'연결 전 · 관리 탭에서 GitHub 토큰을 입력해 주세요':'GitHub 연결됨');
  document.getElementById('week').textContent='주 3회 전신 운동';
  document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));
- view.innerHTML=tab==='work'?renderWork():tab==='history'?renderHistory():renderSettings();
+ view.innerHTML=tab==='work'?renderWork():tab==='history'?renderHistory():tab==='body'?renderBody():renderSettings();
 }
 async function save(){
  const x={id:draft.editingId||String(Date.now())+'-'+Math.random().toString(36).slice(2,9),date:draft.date||date(),label:'전신 운동',exercises:draft.exercises.map(e=>({name:e.name,group:e.group,sets:e.sets.filter(s=>s.done).map(s=>({kg:N(s.kg),reps:N(s.reps)}))})).filter(e=>e.sets.length),cardio:draft.cardio.filter(c=>c.done).map(c=>({name:c.name,minutes:N(c.minutes)}))};
@@ -136,7 +229,13 @@ function download(name,content,type){const blob=new Blob([content],{type}),url=U
 document.addEventListener('click',async ev=>{
  const tb=ev.target.closest('[data-tab]');if(tb){tab=tb.dataset.tab;render();window.scrollTo(0,0);return}
  const b=ev.target.closest('[data-action]');if(!b||busy)return;const a=b.dataset.action,i=Number(b.dataset.i),j=Number(b.dataset.j);
- if(a==='check'){draft.exercises[i].sets[j].done=!draft.exercises[i].sets[j].done;hydrated=true;persist();render()}
+ if(a==='weightsave'){await saveBodyWeight();return}
+ else if(a==='heightsave'){await saveHeight();return}
+ else if(a==='weightdelete'){await deleteBodyWeight(b.dataset.date);return}
+ else if(a==='weightedit'){editBodyWeight(b.dataset.date);return}
+ else if(a==='weightcancel'){document.getElementById('weight-date').value=date();document.getElementById('weight-kg').value='';document.getElementById('weight-date').disabled=false;document.getElementById('weight-save-label').textContent='☁ 체중 기록 저장';return}
+ else if(a==='weightrange'){chartRange=b.dataset.range;render();return}
+ else if(a==='check'){draft.exercises[i].sets[j].done=!draft.exercises[i].sets[j].done;hydrated=true;persist();render()}
  else if(a==='checkcardio'){draft.cardio[i].done=!draft.cardio[i].done;hydrated=true;persist();render()}
  else if(a==='addset'){const ex=draft.exercises[i],s=ex.sets.at(-1)||{kg:0,reps:12};if(ex.sets.length<30)ex.sets.push({...s,done:false});hydrated=true;persist();render()}
  else if(a==='delset'){const ex=draft.exercises[i];if(ex.sets.length>1)ex.sets.pop();hydrated=true;persist();render()}
