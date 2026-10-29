@@ -39,5 +39,51 @@ input,select{border:1px solid #e4e9f1;background:#f9fafc;color:var(--ink);font:i
 .cardio-fields input{width:100%;padding:10px 7px;font-size:15px;font-weight:700;text-align:center}
 .cardio-fields button{height:43px;padding:6px;font-size:19px}
 @media(max-width:360px){.cardio-fields{gap:5px}.cardio-fields label .muted{font-size:10px}}
+
+/* Workout calendar */
+.calendar-card{padding:16px 13px 13px;margin-top:18px}
+.calendar-title{margin:2px 3px 8px}.calendar-title strong{font-size:20px;letter-spacing:-.4px}
+.cal-navigation{display:flex;gap:5px;align-items:center}
+.cal-navigation button{padding:7px 10px;border-radius:10px;font-size:13px;min-width:32px}
+.calendar-summary{margin:0 4px 15px;font-size:12px;color:#70819a}
+.calendar-summary b{color:#29496e}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.calendar-weekday{text-align:center;color:#8190a7;font-size:11px;font-weight:700;padding:4px 0 6px}
+.calendar-weekday:nth-child(7){color:#cc6c69}
+.calendar-blank{min-height:57px}
+.calendar-day{border:1px solid #e8edf4;background:#f8faff;border-radius:10px;min-height:57px;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:5px;font:inherit;font-size:12px;color:#748199;cursor:pointer}
+.calendar-day.calendar-worked{background:#eaf1ff;border-color:#d2defc;color:#304da0;font-weight:800}
+.calendar-day.calendar-today{box-shadow:inset 0 0 0 1.5px #8199f3}
+.calendar-day.calendar-selected{background:#435ed0;border-color:#435ed0;color:#fff}
+.calendar-dot{background:#5371e4;width:6px;height:6px;border-radius:50%}
+.calendar-selected .calendar-dot{background:#fff}
+.calendar-nodot{height:6px}
+.calendar-day small{font-size:9px;line-height:1}
+.calendar-legend{display:flex;align-items:center;justify-content:space-between;gap:5px;margin:11px 4px 0;color:#8491a5;font-size:10px}
+.calendar-legend>span:first-child{white-space:nowrap}
+.calendar-legend i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5371e4;vertical-align:middle;margin-right:4px}
+/* BMI range bar with six medically-defined groups; marker follows current BMI */
+.bmi-scale-card{padding:18px 16px}
+.bmi-ruler{padding-top:40px;position:relative;margin:2px 0 22px}
+.bmi-track{width:100%;height:15px;display:flex;position:relative;border-radius:9px;overflow:visible}
+.bmi-band:first-child{border-radius:9px 0 0 9px}
+.bmi-band:nth-child(6){border-radius:0 9px 9px 0}
+.bmi-ticks{position:relative;height:22px;margin-top:3px}
+.bmi-tick{position:absolute;top:0;transform:translateX(-50%);font-size:10px;font-weight:700;color:#8691a1;text-align:center}
+.bmi-tick i{display:block;height:6px;width:1px;margin:-3px auto 3px;background:#8899ac}
+.bmi-marker{position:absolute;z-index:2;top:-32px;transform:translateX(-50%);display:flex;align-items:center;flex-direction:column;gap:1px;pointer-events:none}
+.bmi-marker-label{background:#293b5d;border-radius:8px;padding:3px 7px;font-size:11px;line-height:17px;font-weight:800;color:#fff;white-space:nowrap;box-shadow:0 2px 8px #2034552c}
+.bmi-arrow{height:0;width:0;border:6px solid transparent;border-top-color:#293b5d;border-bottom:0}
+.bmi-legend{display:flex;gap:7px 12px;flex-wrap:wrap;margin-top:4px}
+.bmi-legend span{white-space:nowrap;font-size:10px;color:#728198}
+.bmi-legend i,.bmi-row-name i{display:inline-block;vertical-align:middle;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.bmi-weight-heading{display:flex;justify-content:space-between;align-items:center;gap:5px;margin:22px 0 7px}
+.bmi-weight-heading strong{font-size:13px}
+.bmi-weight-row{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:8px 10px;margin:2px 0;border-radius:8px;font-size:12px}
+.bmi-weight-row:nth-child(odd){background:#f7f9fc}
+.bmi-weight-active{background:#e9efff!important;border:1px solid #d3ddfb;padding:7px 9px;font-weight:800;color:#2849a4}
+.bmi-row-name{min-width:0;white-space:nowrap}.bmi-row-value{white-space:nowrap;font-variant-numeric:tabular-nums;font-size:11px}
+@media(max-width:360px){.calendar-grid{gap:3px}.calendar-day,.calendar-blank{min-height:52px}.calendar-legend{font-size:9px}.bmi-scale-card{padding:16px 12px}}
+
 </style>
-</head><body><main class="app"><header><div><div class="logo">▣ 운동로그</div><div class="small">MY FITNESS JOURNAL</div></div><div class="pill" id="week">주 3회 전신 운동</div></header><div id="cloud" class="cloud warn">GitHub 연결 전 · 관리 탭에서 연결해 주세요</div><div id="view"></div></main><nav class="bottom"><button type="button" data-tab="work" class="active">◉ 운동하기</button><button type="button" data-tab="history">▦ 운동 기록</button><button type="button" data-tab="body">◔ 체중·BMI</button><button type="button" data-tab="settings">⚙ 관리</button></nav><script src="./app.js?v=4" defer></script></body></html>
+</head><body><main class="app"><header><div><div class="logo">▣ 운동로그</div><div class="small">MY FITNESS JOURNAL</div></div><div class="pill" id="week">주 3회 전신 운동</div></header><div id="cloud" class="cloud warn">GitHub 연결 전 · 관리 탭에서 연결해 주세요</div><div id="view"></div></main><nav class="bottom"><button type="button" data-tab="work" class="active">◉ 운동하기</button><button type="button" data-tab="history">▦ 운동 기록</button><button type="button" data-tab="body">◔ 체중·BMI</button><button type="button" data-tab="settings">⚙ 관리</button></nav><script src="./app.js?v=5" defer></script></body></html>
