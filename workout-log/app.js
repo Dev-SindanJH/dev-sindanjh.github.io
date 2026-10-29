@@ -7,7 +7,7 @@ const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const N=x=>{const v=Number(x);return Number.isFinite(v)?Math.max(0,Math.min(v,9999)):0};
 const date=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const templates=[['레그프레스','하체'],['랫풀다운','등'],['체스트프레스','가슴'],['이너타이','하체'],['글루트 브리지','엉덩이']];
-function newDraft(){return {date:date(),editingId:null,exercises:templates.map(t=>({name:t[0],group:t[1],sets:[{kg:0,reps:12,done:false},{kg:0,reps:12,done:false}]})),cardio:[{name:'준비 걷기',minutes:0,done:false},{name:'마무리 걷기',minutes:0,done:false}]}}
+function newDraft(){return {date:date(),editingId:null,exercises:templates.map(t=>({name:t[0],group:t[1],sets:[{kg:0,reps:12,done:false},{kg:0,reps:12,done:false}]})),cardio:[{name:'준비 걷기',minutes:0,speedKmh:null,done:false},{name:'마무리 걷기',minutes:0,speedKmh:null,done:false}]}}
 const stored=localStorage.getItem(STATE_KEY);let draft;
 try{draft=JSON.parse(stored)?.draft||newDraft()}catch(e){draft=newDraft()}
 if(!draft.exercises||!draft.cardio)draft=newDraft();
@@ -38,7 +38,7 @@ function populateDraft(){
   const last=r.exercises.find(x=>x.name===e.name);
   if(last)e.sets=last.sets.map(s=>({kg:N(s.kg),reps:N(s.reps),done:false}));
  }
- for(const c of draft.cardio){const last=r.cardio.find(x=>x.name===c.name);if(last)c.minutes=N(last.minutes)}
+ for(const c of draft.cardio){const last=r.cardio.find(x=>x.name===c.name);if(last){c.minutes=N(last.minutes);c.speedKmh=validSpeed(last.speedKmh)}}
  hydrated=true;persist();
 }
 async function sync(showMessage=false){
@@ -87,22 +87,42 @@ const FOOD_ENERGY=[
  {name:'삶은 달걀',portion:'개',kcal:75,icon:'🥚',unit:'1개 · 약 75kcal'},
  {name:'사과',portion:'개',kcal:95,icon:'🍎',unit:'중간 크기 1개 · 약 95kcal'}
 ];
+
+/* 2024 Adult Compendium, level treadmill, 0% grade.
+   Prior records without speed use legacy 3.5 MET assumption; do not fabricate speed. */
+function validSpeed(v){
+ if(v==null||String(v).trim()==='')return null;
+ const x=Number(v);
+ return Number.isFinite(x)&&x>=0.5&&x<=25?x:null;
+}
+function treadmillMet(speed){
+ if(speed===null)return 3.5;
+ const bands=[
+  [1.6,2.1],[1.9,2.3],[3.1,2.8],[3.9,3.0],[4.7,3.5],
+  [5.5,3.8],[6.3,4.8],[7.1,5.8],[7.9,6.8],[8.9,8.3],
+  [9.5,9.0],[10.3,9.3],[11.2,10.5],[12.2,11.8],
+  [13.0,12.0],[14.5,13.0],[16.0,14.8],[17.8,16.8],[19.5,18.5],[25,23.0]
+ ];
+ return bands.find(x=>speed<=x[0])?.[1]||23;
+}
 function calcWorkoutEnergy(workout,isDraft=false){
  const sets=(workout.exercises||[]).reduce((n,ex)=>n+(ex.sets||[]).filter(st=>!isDraft||st.done).length,0);
- const mins=(workout.cardio||[]).reduce((n,c)=>n+((!isDraft||c.done)?N(c.minutes):0),0);
+ const segments=(workout.cardio||[]).filter(c=>(!isDraft||c.done)&&N(c.minutes)>0);
+ const mins=segments.reduce((n,c)=>n+N(c.minutes),0);
  const measures=sortedWeights();
  const older=measures.filter(x=>x.date<=workout.date).at(-1);
  const selected=older||measures.at(-1);
  if(!selected||(!sets&&!mins))return {available:false,sets,mins};
- const weight=Number(selected.kg);
- const strengthMinutes=sets*2;
- const caloriesPerMin=(3.5-1)*3.5*weight/200;
- const strength=Math.round(strengthMinutes*caloriesPerMin);
- const cardio=Math.round(mins*caloriesPerMin);
- return {available:true,total:strength+cardio,strength,cardio,weight,
+ const weight=Number(selected.kg),strengthMinutes=sets*2;
+ const strength=Math.round(strengthMinutes*(3.5-1)*3.5*weight/200);
+ const cardio=Math.round(segments.reduce((n,c)=>n+N(c.minutes)*(treadmillMet(validSpeed(c.speedKmh))-1)*3.5*weight/200,0));
+ const speedUnknown=segments.some(c=>validSpeed(c.speedKmh)===null);
+ const speeds=segments.map(c=>({name:c.name,minutes:N(c.minutes),speedKmh:validSpeed(c.speedKmh)}));
+ return {available:true,total:strength+cardio,strength,cardio,weight,speeds,speedUnknown,
    weightDate:selected.date,stale:Math.abs(Date.parse(workout.date+'T00:00:00Z')-Date.parse(selected.date+'T00:00:00Z'))>30*86400000,
    sets,mins};
 }
+
 function foodEnergyItems(total){
  return '<div class="food-list">'+FOOD_ENERGY.map(f=>{
  const ratio=total/f.kcal;
@@ -119,8 +139,9 @@ function renderEnergyCard(workout,isDraft=false){
  return '<section class="energy-card"><div class="energy-head"><div><div class="energy-label">🔥 예상 운동 소모 칼로리</div><div class="energy-total">약 '+v.total+'<span style="font-size:13px;font-weight:700"> kcal</span></div></div><span class="pill">활동 칼로리</span></div>'+
  '<div class="energy-parts"><span>🏋️ 근력 약 '+v.strength+'kcal</span><span>🚶 걷기 약 '+v.cardio+'kcal</span></div>'+
  '<div class="energy-compact">몸무게 '+num(v.weight)+'kg ('+E(v.weightDate)+' 기록) 기준'+(v.stale?' · <b>과거 체중으로 계산했어요. 현재 체중을 업데이트하면 더 유용합니다.</b>':'')+'</div>'+
+ '<div class="energy-compact">'+v.speeds.map(c=>E(c.name)+' '+c.minutes+'분 · '+(c.speedKmh===null?'<b>속도 미기록</b>':num(c.speedKmh,1)+'km/h')).join(' / ')+(v.speedUnknown?' · <b>미기록 구간은 기존 3.5 MET로 추정</b>':'')+'</div>'+
  '<div style="font-weight:850;font-size:13px;margin:14px 0 0;color:#31486c">이 열량을 음식으로 비교하면?</div>'+foodEnergyItems(v.total)+
- '<details class="energy-details"><summary>계산 기준과 주의사항 보기</summary><p>2024 성인 신체활동 MET 표를 참고했습니다. 근력운동은 완료한 세트당 2분(휴식 포함 추정), 걷기는 기록된 시간에 각각 3.5 MET를 적용하고, 휴식 시 소모량(1 MET)을 제외한 <b>추가 활동 칼로리</b>만 표시합니다. 실제 칼로리는 걷기 속도·경사·세트 간 휴식·강도와 개인차에 따라 크게 달라질 수 있습니다. 음식은 일반적인 1회 제공량의 대략적인 열량이며, 영양적 동등성이나 식사 조절 지침을 뜻하지 않습니다.</p></details></section>';
+ '<details class="energy-details"><summary>계산 기준과 주의사항 보기</summary><p>2024 성인 신체활동 MET 표를 참고했습니다. 근력운동은 완료한 세트당 2분(휴식 포함 추정), 러닝머신은 속도가 있으면 평지(경사 0%) 기준으로 속도별 MET를 적용하고, 속도 미기록 구간은 종전과 동일하게 3.5 MET를 적용하며, 휴식 시 소모량(1 MET)을 제외한 <b>추가 활동 칼로리</b>만 표시합니다. 실제 칼로리는 경사·세트 간 휴식·강도와 개인차에 따라 크게 달라질 수 있습니다. 구간 내 속도가 달라졌다면 평균 속도를 입력해주세요. <a href="https://pacompendium.com/walking/" target="_blank" rel="noopener noreferrer">MET 기준 참고</a>. 음식은 일반적인 1회 제공량의 대략적인 열량이며, 영양적 동등성이나 식사 조절 지침을 뜻하지 않습니다.</p></details></section>';
 }
 
 function renderWork(){
@@ -135,7 +156,8 @@ function renderWork(){
   h+='<div class="flex" style="margin-top:9px">'+btn('+ 세트','addset','tiny') .replace('data-action="addset"','data-action="addset" data-i="'+i+'"')+btn('세트 삭제','delset','tiny').replace('data-action="delset"','data-action="delset" data-i="'+i+'"')+btn('종목 삭제','delex','tiny').replace('data-action="delex"','data-action="delex" data-i="'+i+'"')+'</div></section>';
  });
  h+='<h2>유산소</h2><section class="card">';
- draft.cardio.forEach((c,i)=>{h+='<div class="row" style="margin:7px 0"><strong>'+E(c.name)+'</strong><div class="flex"><input style="width:82px" type="number" min="0" inputmode="numeric" data-cardio="'+i+'" value="'+N(c.minutes)+'" aria-label="유산소 분"><span class="muted">분</span><button class="btn '+(c.done?'checked':'')+'" type="button" data-action="checkcardio" data-i="'+i+'">'+(c.done?'✓':'○')+'</button></div></div>'});
+ draft.cardio.forEach((c,i)=>{h+='<div class="cardio-entry"><strong>'+E(c.name)+'</strong><div class="cardio-fields"><label><span class="muted">운동시간 (분)</span><input type="number" min="0" max="600" inputmode="numeric" data-cardio="'+i+'" value="'+N(c.minutes)+'" aria-label="'+E(c.name)+' 운동시간 분"></label><label><span class="muted">평균 속도 (km/h)</span><input type="number" min="0.5" max="25" step="0.1" inputmode="decimal" placeholder="미기록" data-cardio-speed="'+i+'" value="'+(validSpeed(c.speedKmh)===null?'':validSpeed(c.speedKmh))+'" aria-label="'+E(c.name)+' 평균 속도 km/h"></label><button class="btn '+(c.done?'checked':'')+'" type="button" data-action="checkcardio" data-i="'+i+'" aria-label="'+E(c.name)+' 완료">'+(c.done?'✓':'○')+'</button></div></div>'});
+ h+='<p class="footnote">속도가 달라졌다면 평균 속도를 입력하세요. 비워두면 기존 보통 걷기 기준으로만 칼로리를 추정합니다.</p>';
  h+='</section><h2>예상 칼로리 · 음식 비교</h2>'+renderEnergyCard(draft,true)+'<button class="btn primary" type="button" data-action="save" '+(busy?'disabled':'')+'>'+(busy?'처리 중…':draft.editingId?'☁️ GitHub에 수정 저장':'☁️ GitHub에 운동 저장')+'</button><p class="help">완료 체크된 세트와 유산소만 저장됩니다. GitHub 연결 전에는 작성한 내용이 휴대폰 브라우저에 임시 보관됩니다.</p>';
  if(draft.editingId)h+=btn('수정 취소','cancel','full');
  return h;
@@ -148,7 +170,7 @@ function renderHistory(){
   const n=w.exercises.reduce((v,e)=>v+e.sets.length,0),rep=w.exercises.reduce((v,e)=>v+e.sets.reduce((x,s)=>x+N(s.reps),0),0),mins=w.cardio.reduce((x,c)=>x+N(c.minutes),0);
   h+='<section class="card"><div class="row"><span class="history-date">'+datePretty(w.date)+'</span><span class="pill">☁ 비공개 저장</span></div><div class="muted">'+E(w.label||'전신 운동')+'</div><div class="history-stat"><div><strong>'+n+'</strong><span>근력 세트</span></div><div><strong>'+rep+'</strong><span>총 반복</span></div><div><strong>'+mins+'분</strong><span>유산소</span></div></div>';
   w.exercises.forEach(ex=>h+='<div class="line"><b>'+E(ex.name)+'</b><span>'+ex.sets.map(s=>N(s.kg)+'kg×'+N(s.reps)).join(' / ')+'</span></div>');
-  w.cardio.forEach(c=>h+='<div class="line"><b>'+E(c.name)+'</b><span>'+N(c.minutes)+'분</span></div>');
+  w.cardio.forEach(c=>h+='<div class="line"><b>'+E(c.name)+'</b><span>'+N(c.minutes)+'분 · '+(validSpeed(c.speedKmh)===null?'속도 미기록':num(validSpeed(c.speedKmh),1)+'km/h')+'</span></div>');
   h+=renderEnergyCard(w,false);
   h+='<div class="buttons"><button class="btn" data-action="edit" data-id="'+E(w.id)+'">수정</button><button class="btn danger" data-action="delete" data-id="'+E(w.id)+'">삭제</button></div></section>';
  }
@@ -257,7 +279,7 @@ function render(){
  view.innerHTML=tab==='work'?renderWork():tab==='history'?renderHistory():tab==='body'?renderBody():renderSettings();
 }
 async function save(){
- const x={id:draft.editingId||String(Date.now())+'-'+Math.random().toString(36).slice(2,9),date:draft.date||date(),label:'전신 운동',exercises:draft.exercises.map(e=>({name:e.name,group:e.group,sets:e.sets.filter(s=>s.done).map(s=>({kg:N(s.kg),reps:N(s.reps)}))})).filter(e=>e.sets.length),cardio:draft.cardio.filter(c=>c.done).map(c=>({name:c.name,minutes:N(c.minutes)}))};
+ const x={id:draft.editingId||String(Date.now())+'-'+Math.random().toString(36).slice(2,9),date:draft.date||date(),label:'전신 운동',exercises:draft.exercises.map(e=>({name:e.name,group:e.group,sets:e.sets.filter(s=>s.done).map(s=>({kg:N(s.kg),reps:N(s.reps)}))})).filter(e=>e.sets.length),cardio:draft.cardio.filter(c=>c.done).map(c=>({...{name:c.name,minutes:N(c.minutes)},...(validSpeed(c.speedKmh)===null?{}:{speedKmh:validSpeed(c.speedKmh)})}))};
  if(!x.exercises.length&&!x.cardio.length){alert('완료한 세트 또는 유산소를 먼저 체크해주세요.');return;}
  try{
   await mutate(list=>{const i=list.findIndex(w=>w.id===x.id);if(i>=0)list[i]=x;else list.push(x);return list;},(draft.editingId?'Update ':'Add ')+'workout '+x.date);
@@ -270,8 +292,8 @@ async function removeRecord(id){
  try{await mutate(list=>list.filter(w=>w.id!==id),'Delete workout record');if(draft.editingId===id)draft=newDraft();persist();render()}catch(e){alertError(e)}
 }
 function makeCsv(){
- const lines=[['날짜','운동','세트','무게(kg)','횟수','유산소(분)']];
- for(const w of records){for(const ex of w.exercises)ex.sets.forEach((s,i)=>lines.push([w.date,ex.name,i+1,N(s.kg),N(s.reps),'']));for(const c of w.cardio)lines.push([w.date,c.name,'','','',N(c.minutes)])}
+ const lines=[['날짜','운동','세트','무게(kg)','횟수','유산소(분)','유산소 평균속도(km/h)']];
+ for(const w of records){for(const ex of w.exercises)ex.sets.forEach((s,i)=>lines.push([w.date,ex.name,i+1,N(s.kg),N(s.reps),'','']));for(const c of w.cardio)lines.push([w.date,c.name,'','','',N(c.minutes),validSpeed(c.speedKmh)??''])}
  return '\ufeff'+lines.map(a=>a.map(s=>'"'+String(s).replaceAll('"','""')+'"').join(',')).join('\r\n');
 }
 function download(name,content,type){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
@@ -305,6 +327,7 @@ document.addEventListener('change',async ev=>{
  const el=ev.target;
  if(el.matches('[data-field]')){const s=draft.exercises[Number(el.dataset.i)]?.sets[Number(el.dataset.j)];if(s){s[el.dataset.field]=N(el.value);hydrated=true;persist()}}
  if(el.matches('[data-cardio]')){draft.cardio[Number(el.dataset.cardio)].minutes=N(el.value);hydrated=true;persist()}
+ if(el.matches('[data-cardio-speed]')){const v=String(el.value).trim();if(v&&validSpeed(v)===null){alert('속도는 0.5~25km/h 범위로 입력해주세요.');el.value='';}draft.cardio[Number(el.dataset.cardioSpeed)].speedKmh=validSpeed(el.value);hydrated=true;persist();render()}
  if(el.id==='work-date'&&/^\d{4}-\d{2}-\d{2}$/.test(el.value)){draft.date=el.value;hydrated=true;persist()}
  if(el.id==='import-file'&&el.files?.length){
   try{const data=JSON.parse(await el.files[0].text());if(!data||!Array.isArray(data.workouts)||!confirm('백업의 운동 기록을 비공개 GitHub에 병합할까요?'))return;await mutate(list=>{const ids=new Set(list.map(x=>String(x.id)));return list.concat(data.workouts.filter(x=>x&&x.id&&!ids.has(String(x.id))))},'Import workout backup');if(data.draft&&Array.isArray(data.draft.exercises)){draft=data.draft;persist()}render();alert('백업을 반영했습니다.')}
