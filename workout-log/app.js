@@ -13,6 +13,7 @@ try{draft=JSON.parse(stored)?.draft||newDraft()}catch(e){draft=newDraft()}
 if(!draft.exercises||!draft.cardio)draft=newDraft();
 let tab='work',records=[],token='',remember=false,busy=false,status='',currentId=null,hydrated=!!stored;
 let bodyProfile={heightCm:177},bodyWeights=[],chartRange='all';
+let calendarMonth=date().slice(0,7),calendarSelected=null;
 try{let v=JSON.parse(localStorage.getItem(TOKEN_KEY)||'{}');remember=!!v.remember;token=v.token||sessionStorage.getItem(SESSION_KEY)||''}catch(e){}
 function persist(){localStorage.setItem(STATE_KEY,JSON.stringify({draft}))}
 function alertError(e){alert((e&&e.message)||String(e))}
@@ -163,10 +164,47 @@ function renderWork(){
  return h;
 }
 function datePretty(s){const p=String(s||'').split('-');return p.length===3?Number(p[1])+'월 '+Number(p[2])+'일':E(s)}
+
+/* Workout history calendar — Monday-first, local dates, read from existing private records. */
+function calendarShift(base,offset){
+ const [y,m]=base.split('-').map(Number),d=new Date(y,m-1+offset,1);
+ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+}
+function workoutCalendar(){
+ const [year,month]=calendarMonth.split('-').map(Number);
+ const firstDay=(new Date(year,month-1,1).getDay()+6)%7;
+ const days=new Date(year,month,0).getDate();
+ const cells=Math.ceil((firstDay+days)/7)*7;
+ const counts={};
+ for(const workout of records){
+  if(typeof workout.date==='string'&&workout.date.startsWith(calendarMonth+'-')){
+    counts[workout.date]=(counts[workout.date]||0)+1;
+  }
+ }
+ const dates=Object.keys(counts);
+ let h='<section class="card calendar-card"><div class="row calendar-title"><div><div class="small">운동 달력</div><strong>'+year+'년 '+month+'월</strong></div>'+
+ '<div class="cal-navigation"><button class="btn" data-action="calprev" aria-label="이전 달">‹</button><button class="btn" data-action="calnow">이번 달</button><button class="btn" data-action="calnext" aria-label="다음 달">›</button></div></div>'+
+ '<div class="calendar-summary">운동 <b>'+dates.length+'일</b> · 총 <b>'+dates.reduce((n,k)=>n+counts[k],0)+'회</b> 기록</div>'+
+ '<div class="calendar-grid">';
+ for(const label of ['월','화','수','목','금','토','일'])h+='<div class="calendar-weekday">'+label+'</div>';
+ for(let i=0;i<cells;i++){
+  const n=i-firstDay+1;
+  if(n<1||n>days){h+='<div class="calendar-blank" aria-hidden="true"></div>';continue}
+  const day=calendarMonth+'-'+String(n).padStart(2,'0'),count=counts[day]||0;
+  const cls=(count?' calendar-worked':'')+(day===date()?' calendar-today':'')+(day===calendarSelected?' calendar-selected':'');
+  h+='<button type="button" class="calendar-day'+cls+'" data-action="calpick" data-date="'+day+'" aria-label="'+month+'월 '+n+'일, 운동 '+count+'회" aria-pressed="'+(day===calendarSelected)+'"><span>'+n+'</span>'+
+   (count?'<span class="calendar-dot" aria-hidden="true"></span>':'<span class="calendar-nodot" aria-hidden="true"></span>')+
+   (count>1?'<small>'+count+'회</small>':'')+'</button>';
+ }
+ h+='</div><div class="calendar-legend"><span><i></i> 운동한 날</span><span>날짜를 누르면 해당 기록만 표시됩니다</span></div></section>';
+ return h;
+}
+
 function renderHistory(){
- let h='<div class="row"><h2>운동 기록</h2><span class="muted">총 '+records.length+'회</span></div>';
- if(!records.length)h+='<section class="card" style="text-align:center;padding:40px">저장된 운동이 없습니다. 관리에서 GitHub를 연결해 주세요.</section>';
- for(const w of records.slice().sort((a,b)=>b.date.localeCompare(a.date))){
+ const visible=(calendarSelected?records.filter(w=>w.date===calendarSelected):records).slice().sort((a,b)=>b.date.localeCompare(a.date));
+ let h=workoutCalendar()+'<div class="row"><h2>'+(calendarSelected?datePretty(calendarSelected)+' 운동 기록':'전체 운동 기록')+'</h2>'+(calendarSelected?'<button class="btn" data-action="calclear">전체 보기</button>':'<span class="muted">총 '+records.length+'회</span>')+'</div>';
+ if(!visible.length)h+='<section class="card" style="text-align:center;padding:32px"><strong>'+(calendarSelected?'선택한 날짜에는 운동 기록이 없습니다.':'저장된 운동이 없습니다.')+'</strong><p class="muted">'+(calendarSelected?'다른 날짜를 선택하거나 전체 보기를 눌러주세요.':'운동이 저장되면 달력에 표시됩니다.')+'</p></section>';
+ for(const w of visible){
   const n=w.exercises.reduce((v,e)=>v+e.sets.length,0),rep=w.exercises.reduce((v,e)=>v+e.sets.reduce((x,s)=>x+N(s.reps),0),0),mins=w.cardio.reduce((x,c)=>x+N(c.minutes),0);
   h+='<section class="card"><div class="row"><span class="history-date">'+datePretty(w.date)+'</span><span class="pill">☁ 비공개 저장</span></div><div class="muted">'+E(w.label||'전신 운동')+'</div><div class="history-stat"><div><strong>'+n+'</strong><span>근력 세트</span></div><div><strong>'+rep+'</strong><span>총 반복</span></div><div><strong>'+mins+'분</strong><span>유산소</span></div></div>';
   w.exercises.forEach(ex=>h+='<div class="line"><b>'+E(ex.name)+'</b><span>'+ex.sets.map(s=>N(s.kg)+'kg×'+N(s.reps)).join(' / ')+'</span></div>');
@@ -198,12 +236,48 @@ function bodyChart(items){
  const lab=s=>s.slice(5).replace('-','/');
  return '<div class="chart-wrap"><svg viewBox="0 0 380 205" role="img" aria-label="체중 변화 그래프, '+items.length+'개 기록, '+num(rawMin)+'kg에서 '+num(rawMax)+'kg"><defs><linearGradient id="wtfade" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#7893fb" stop-opacity=".30"/><stop offset="1" stop-color="#7893fb" stop-opacity=".015"/></linearGradient></defs>'+axes+area+'<path d="'+path+'" fill="none" stroke="#4967ea" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"></path>'+dots+'<text class="chart-label" x="'+L+'" y="'+(H-8)+'" text-anchor="start">'+E(lab(items[0].date))+'</text><text class="chart-label" x="'+(W-R)+'" y="'+(H-8)+'" text-anchor="end">'+E(lab(items.at(-1).date))+'</text></svg></div>';
 }
+
+/* BMI scale uses the six Korean adult BMI groups from the Korean Society for the Study of Obesity.
+   Segment positions and marker use a single linear BMI scale from 15 to 40. */
+function bmiScale(heightCm,bmi){
+ const sq=Math.pow(heightCm/100,2),lo=15,hi=40;
+ const colors=['#60b5a4','#62ae7f','#cfcb64','#efa558','#e9796a','#ad597b'];
+ const ranges=[
+  {name:'저체중',lower:null,upper:18.5,bmi:'18.5 미만'},
+  {name:'정상',lower:18.5,upper:23,bmi:'18.5~22.9'},
+  {name:'비만 전단계',lower:23,upper:25,bmi:'23~24.9'},
+  {name:'1단계 비만',lower:25,upper:30,bmi:'25~29.9'},
+  {name:'2단계 비만',lower:30,upper:35,bmi:'30~34.9'},
+  {name:'3단계 비만',lower:35,upper:null,bmi:'35 이상'}
+ ];
+ const pct=x=>Math.min(100,Math.max(0,((x-lo)/(hi-lo))*100));
+ const stops=[lo,18.5,23,25,30,35,hi];
+ const strips=ranges.map((r,i)=>'<span class="bmi-band" style="width:'+(pct(stops[i+1])-pct(stops[i])).toFixed(2)+'%;background:'+colors[i]+'"></span>').join('');
+ const ticks=[18.5,23,25,30,35].map(x=>'<span class="bmi-tick" style="left:'+pct(x).toFixed(2)+'%"><i></i>'+x+'</span>').join('');
+ const rawPos=bmi===null?null:pct(bmi);
+ const pin=rawPos===null?'':'<span class="bmi-marker" style="left:'+Math.max(2,Math.min(98,rawPos)).toFixed(2)+'%" aria-label="최근 BMI '+num(bmi,2)+'"><span class="bmi-marker-label">'+num(bmi,2)+'</span><span class="bmi-arrow"></span></span>';
+ let h='<section class="card bmi-scale-card"><div class="row"><strong>나의 BMI 위치</strong><span class="muted">키 '+num(heightCm,0)+'cm 기준</span></div>'+
+ '<div class="bmi-ruler"><div class="bmi-track">'+strips+pin+'</div><div class="bmi-ticks">'+ticks+'</div></div>';
+ h+='<div class="bmi-legend">'+ranges.map((r,i)=>'<span><i style="background:'+colors[i]+'"></i>'+r.name+'</span>').join('')+'</div>';
+ if(bmi!==null&&(bmi<lo||bmi>hi))h+='<p class="footnote">BMI '+lo+'~'+hi+' 표시 범위를 벗어나므로 표시 위치는 끝에 고정됩니다.</p>';
+ h+='<div class="bmi-weight-heading"><strong>키 '+num(heightCm,0)+'cm일 때 구간별 체중</strong><span class="muted">약 kg</span></div>';
+ for(let i=0;i<ranges.length;i++){
+  const r=ranges[i],minKg=r.lower===null?null:num(r.lower*sq),maxKg=r.upper===null?null:num(r.upper*sq);
+  const wt=minKg===null?maxKg+'kg 미만':maxKg===null?minKg+'kg 이상':minKg+' ~ '+maxKg+'kg';
+  const active=bmi!==null&&(r.lower===null||bmi>=r.lower)&&(r.upper===null||bmi<r.upper);
+  h+='<div class="bmi-weight-row'+(active?' bmi-weight-active':'')+'"><div class="bmi-row-name"><i style="background:'+colors[i]+'"></i><span>'+r.name+'</span></div><span class="bmi-row-value">'+wt+'</span></div>';
+ }
+ h+='<p class="footnote" style="margin-top:12px">대한비만학회 성인 BMI 구간 기준. 경계 체중은 소수점 한 자리로 반올림한 참고값입니다. BMI만으로 개인의 체지방률이나 건강 상태를 판단할 수는 없습니다. <a href="https://www.hanam.go.kr/health/contents.do?key=8926" target="_blank" rel="noopener noreferrer">기준 확인</a></p></section>';
+ return h;
+}
+
 function renderBody(){
  const list=sortedWeights(),last=list.at(-1),first=list[0],ht=safeHeight(bodyProfile.heightCm)||177;
  const idx=last?Number(last.kg)/((ht/100)**2):null,delta=last&&first&&list.length>1?Number(last.kg)-Number(first.kg):null;
  const rangeDays=chartRange==='all'?Infinity:Number(chartRange),cutoff=Number.isFinite(rangeDays)?Date.parse(date()+'T00:00:00Z')-rangeDays*86400000:-Infinity;
  const selected=list.filter(x=>Date.parse(x.date+'T00:00:00Z')>=cutoff);
  let h='<h2>체중 & BMI</h2><div class="weight-hero"><div class="body-head"><div><div class="small">최근 기록 기반 BMI</div><div class="bmi-big">'+(idx===null?'—':num(idx))+'</div><div class="sub">'+(last?prettyDate(last.date)+' 측정값 기준':'체중을 먼저 기록해 주세요')+'</div></div><div style="text-align:right"><span class="bmi-tag">'+(idx===null?'기록 없음':E(bmiCategory(idx)))+'</span><div class="sub">한국 성인 BMI 기준</div></div></div><div class="metric-grid"><div class="metric"><small>최근 기록 체중</small><strong>'+(last?num(last.kg)+'<small style="display:inline;font-size:12px"> kg</small>':'—')+'</strong></div><div class="metric"><small>첫 기록 대비</small><strong class="'+(delta===null?'':delta>0?'positive':'negative')+'">'+(delta===null?'—':(delta>0?'+':'')+num(delta)+' kg')+'</strong></div></div></div>';
+ h+=bmiScale(ht,idx);
  h+='<section class="card"><div class="row"><strong>내 키</strong><div class="flex"><input style="width:93px" id="height-cm" type="number" min="100" max="250" step="0.1" inputmode="decimal" value="'+ht+'"><span class="muted">cm</span><button class="btn" data-action="heightsave">저장</button></div></div><div class="footnote" style="margin-top:10px">BMI = 체중(kg) ÷ 키(m)² · BMI는 건강 상태를 간단히 살펴보는 참고 지표입니다.</div></section>';
  h+='<h2>체중 기록하기</h2><section class="card"><div class="entry-grid"><label><span class="field">측정 날짜</span><input type="date" id="weight-date" value="'+E(date())+'"></label><label><span class="field">몸무게 (kg)</span><input type="number" id="weight-kg" inputmode="decimal" min="25" max="400" step="0.1" placeholder="예: 100.5"></label></div><button class="btn primary" type="button" data-action="weightsave" id="weight-save-label" style="margin-top:14px">☁ 체중 기록 저장</button><p class="footnote">같은 날짜에 다시 기록하면 기존 체중을 수정합니다. 운동 기록과 동일한 비공개 GitHub 저장소에 저장됩니다.</p></section>';
  h+='<div class="row"><h2>몸무게 변화</h2><div class="range-pills">'+[['30','30일'],['90','90일'],['all','전체']].map(x=>'<button class="btn '+(chartRange===x[0]?'on':'')+'" data-action="weightrange" data-range="'+x[0]+'">'+x[1]+'</button>').join('')+'</div></div><section class="card">'+bodyChart(selected)+'<div class="footnote" style="text-align:center;margin-top:7px">점 위에 표시되는 날짜와 체중으로 변화 확인 · 총 '+selected.length+'개 기록</div></section>';
@@ -284,7 +358,7 @@ async function save(){
  try{
   await mutate(list=>{const i=list.findIndex(w=>w.id===x.id);if(i>=0)list[i]=x;else list.push(x);return list;},(draft.editingId?'Update ':'Add ')+'workout '+x.date);
   draft={...draft,date:date(),editingId:null,exercises:draft.exercises.map(e=>({...e,sets:e.sets.map(s=>({...s,done:false}))})),cardio:draft.cardio.map(c=>({...c,done:false}))};
-  hydrated=true;persist();tab='history';render();alert('비공개 GitHub에 운동 기록을 저장했습니다.');
+  hydrated=true;persist();calendarMonth=x.date.slice(0,7);calendarSelected=x.date;tab='history';render();alert('비공개 GitHub에 운동 기록을 저장했습니다.');
  }catch(e){alertError(e)}
 }
 async function removeRecord(id){
@@ -300,7 +374,12 @@ function download(name,content,type){const blob=new Blob([content],{type}),url=U
 document.addEventListener('click',async ev=>{
  const tb=ev.target.closest('[data-tab]');if(tb){tab=tb.dataset.tab;render();window.scrollTo(0,0);return}
  const b=ev.target.closest('[data-action]');if(!b||busy)return;const a=b.dataset.action,i=Number(b.dataset.i),j=Number(b.dataset.j);
- if(a==='weightsave'){await saveBodyWeight();return}
+ if(a==='calprev'){calendarMonth=calendarShift(calendarMonth,-1);calendarSelected=null;render();return}
+ else if(a==='calnext'){calendarMonth=calendarShift(calendarMonth,1);calendarSelected=null;render();return}
+ else if(a==='calnow'){calendarMonth=date().slice(0,7);calendarSelected=null;render();return}
+ else if(a==='calpick'){const selected=b.dataset.date;if(/^\d{4}-\d{2}-\d{2}$/.test(selected)){calendarSelected=calendarSelected===selected?null:selected;render()}return}
+ else if(a==='calclear'){calendarSelected=null;render();return}
+ else if(a==='weightsave'){await saveBodyWeight();return}
  else if(a==='heightsave'){await saveHeight();return}
  else if(a==='weightdelete'){await deleteBodyWeight(b.dataset.date);return}
  else if(a==='weightedit'){editBodyWeight(b.dataset.date);return}
